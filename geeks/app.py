@@ -1,93 +1,160 @@
 import streamlit as st
-import concurrent.futures
-st.set_page_config(page_title="Customer 360 Multi-Agent System", layout="wide")
+import datetime
+import io
+import zipfile
+from agents import (
+    UsecaseAgent, SchemaAgent, MappingAgent,
+    CertifierAgent, ChatbotAgent, SentimentAgent
+)
+from tools import OllamaLLM as CustomTool
+from multi_agent_framework import Memory
 
-from agents import UsecaseAgent, SchemaAgent, MappingAgent, CertifierAgent, SentimentAgent, ChatbotAgent
-from tools import OllamaLLM, WebScraperTool, APIClientTool, CustomMLModel
-from embedding_db import MemoryDB
+st.set_page_config(page_title="Veritas360", layout="wide")
+st.title("🧠 Veritas360: Agentic Customer 360 Data Product System")
 
-tools = [WebScraperTool(), APIClientTool(), CustomMLModel(), OllamaLLM()]
-db = MemoryDB()
-
+tools = [CustomTool() for _ in range(4)]
+memory = Memory()
 agents = {
-    "UsecaseAgent": UsecaseAgent(tools, db),
-    "SchemaAgent": SchemaAgent(tools, db),
-    "MappingAgent": MappingAgent(tools, db),
-    "CertifierAgent": CertifierAgent(tools, db),
-    "SentimentAgent": SentimentAgent(tools, db),
-    "ChatbotAgent": ChatbotAgent(tools, db)
+    "UsecaseAgent": UsecaseAgent(tools, memory),
+    "SchemaAgent": SchemaAgent(tools, memory),
+    "MappingAgent": MappingAgent(tools, memory),
+    "CertifierAgent": CertifierAgent(tools, memory),
+    "SentimentAgent": SentimentAgent(tools, memory),
+    "ChatbotAgent": ChatbotAgent(tools, memory)
 }
 
-st.title("🤖 Customer 360 Multi-Agent System for Retail Banking")
+with st.sidebar:
+    st.header("📘 Agent Overview")
+    st.markdown("- **UsecaseAgent**: Understands business goals")
+    st.markdown("- **SchemaAgent**: Designs entity schema")
+    st.markdown("- **MappingAgent**: Links source data to targets")
+    st.markdown("- **CertifierAgent**: Verifies quality & governance")
+    st.markdown("- **SentimentAgent**: Analyzes user feedback")
+    st.markdown("- **ChatbotAgent**: Responds to user queries")
+    st.markdown("---")
+    st.caption("Powered by SQLite memory + Ollama LLM")
 
-# Input fields
-task = st.text_area("Enter business use case")
-feedback_input = st.text_area("Enter customer feedback (comma-separated)")
-query_input = st.text_area("Enter customer queries (comma-separated)")
 
-# Convert inputs
-feedbacks = [fb.strip() for fb in feedback_input.split(',')]
-queries = [q.strip() for q in query_input.split(',')]
+def extract_entities(text):
+    entities = {}
+    current = None
+    for line in text.splitlines():
+        if "Entity:" in line:
+            current = line.split("Entity:")[1].strip()
+            entities[current] = []
+        elif current and "-" in line:
+            attr = line.split("-")[0].strip()
+            entities[current].append(attr)
+    return entities
 
-# Result placeholders
-usecase_result = schema_result = mapping_result = certifier_result = sentiment_result = chatbot_result = ""
+def render_mermaid(schema_text):
+    schema = extract_entities(schema_text)
+    mermaid_code = "erDiagram\n"
+    for entity, attrs in schema.items():
+        mermaid_code += f"  {entity} {{\n"
+        for attr in attrs:
+            mermaid_code += f"    string {attr}\n"
+        mermaid_code += "  }\n"
+    return mermaid_code
 
-# Run All Agents button (parallelized)
-if st.button("▶️ Run All Agents"):
-    with st.spinner("Running all agents..."):
-        with concurrent.futures.ThreadPoolExecutor() as executor:
-            futures = {
-                "UsecaseAgent": executor.submit(agents["UsecaseAgent"].think, task),
-                "SchemaAgent": executor.submit(agents["SchemaAgent"].think, task),
-                "MappingAgent": executor.submit(agents["MappingAgent"].think, task),
-                "CertifierAgent": executor.submit(agents["CertifierAgent"].think, task),
-                "SentimentAgent": executor.submit(agents["SentimentAgent"].think, feedbacks),
-                "ChatbotAgent": executor.submit(agents["ChatbotAgent"].think, queries)
-            }
-            results = {name: future.result() for name, future in futures.items()}
-        usecase_result = results["UsecaseAgent"]
-        schema_result = results["SchemaAgent"]
-        mapping_result = results["MappingAgent"]
-        certifier_result = results["CertifierAgent"]
-        sentiment_result = results["SentimentAgent"]
-        chatbot_result = results["ChatbotAgent"]
-    st.success("✅ All agents executed.")
 
-# Tabs layout
-tabs = st.tabs(["Usecase", "Schema", "Mapping", "Certifier", "Sentiment", "Chatbot"])
+st.subheader("📥 Use Case Input")
+use_case_input = st.text_area("Enter a Retail Banking Business Use Case:", height=200)
 
-with tabs[0]:
-    st.subheader("🔍 Usecase Agent")
-    if st.button("Run Usecase Agent"):
-        usecase_result = agents["UsecaseAgent"].think(task)
-    st.text_area("Usecase Agent Output", value=usecase_result, height=300)
 
-with tabs[1]:
-    st.subheader("📊 Schema Agent")
-    if st.button("Run Schema Agent"):
-        schema_result = agents["SchemaAgent"].think(task)
-    st.text_area("Schema Agent Output", value=schema_result, height=300)
+results = {}
+if st.button("🚀 Run Veritas360"):
+    if not use_case_input.strip():
+        st.warning("Please provide a use case input.")
+    else:
+        with st.spinner("🤖 Agents at work..."):
+            for key in ["UsecaseAgent", "SchemaAgent", "MappingAgent", "CertifierAgent"]:
+                results[key] = agents[key].think(use_case_input)
 
-with tabs[2]:
-    st.subheader("🔗 Mapping Agent")
-    if st.button("Run Mapping Agent"):
-        mapping_result = agents["MappingAgent"].think(task)
-    st.text_area("Mapping Agent Output", value=mapping_result, height=300)
+        with st.expander("🧠 UsecaseAgent Output", expanded=True):
+            st.write(results["UsecaseAgent"])
 
-with tabs[3]:
-    st.subheader("✅ Certifier Agent")
-    if st.button("Run Certifier Agent"):
-        certifier_result = agents["CertifierAgent"].think(task)
-    st.text_area("Certifier Agent Output", value=certifier_result, height=300)
+        with st.expander("📐 SchemaAgent Output", expanded=True):
+            st.code(results["SchemaAgent"])
+            st.subheader("📊 Visual Schema (Mermaid.js)")
+            st.code(render_mermaid(results["SchemaAgent"]), language="mermaid")
 
-with tabs[4]:
-    st.subheader("🧠 Sentiment Agent")
-    if st.button("Run Sentiment Agent"):
+        with st.expander("🔗 MappingAgent Output", expanded=True):
+            st.code(results["MappingAgent"])
+
+        with st.expander("✅ CertifierAgent Output", expanded=True):
+            st.code(results["CertifierAgent"])
+
+    
+        final_report = "\n\n".join([f"### {k} Output\n{v}" for k, v in results.items()])
+        filename = f"veritas360_report_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.txt"
+        st.download_button("⬇️ Download Full Report", final_report, file_name=filename)
+
+
+st.markdown("---")
+st.subheader("🧠 Sentiment Analysis")
+
+feedback_input = st.text_area("Paste customer feedback (one per line)", placeholder="enter feedback")
+feedbacks = [line.strip() for line in feedback_input.splitlines() if line.strip()]
+sentiment_result = ""
+
+if st.button("Analyze Sentiments"):
+    if not feedbacks:
+        st.warning("Please enter feedback lines.")
+    else:
         sentiment_result = agents["SentimentAgent"].think(feedbacks)
-    st.text_area("Sentiment Analysis Output", value=sentiment_result, height=200)
+        st.code(sentiment_result, language="text")
+        st.download_button("⬇️ Download Sentiment Output", sentiment_result, file_name="sentiment_analysis.txt")
 
-with tabs[5]:
-    st.subheader("💬 Chatbot Agent")
-    if st.button("Run Chatbot Agent"):
-        chatbot_result = agents["ChatbotAgent"].think(queries)
-    st.text_area("Chatbot Responses", value=chatbot_result, height=200)
+
+st.markdown("---")
+st.subheader("💬 Ask Veritas360 Anything (Chatbot Agent)")
+
+if 'chat_history' not in st.session_state:
+    st.session_state.chat_history = []
+
+query_input = st.text_input("Type your question about the data product:")
+
+if st.button("Send"):
+    response = agents["ChatbotAgent"].think([query_input])
+    st.session_state.chat_history.append(("🧑 You", query_input))
+    st.session_state.chat_history.append(("🤖 V360", response))
+
+for speaker, message in reversed(st.session_state.chat_history[-6:]):
+    st.markdown(f"**{speaker}:** {message}")
+
+
+st.markdown("---")
+if st.checkbox("🧾 Show Agent Memory Log"):
+    for name in agents:
+        st.markdown(f"### {name}")
+        rows = memory.fetch(name)
+        for row in rows:
+            st.markdown(f"**Input:** `{row['input']}`")
+            st.markdown(f"**Output:** {row['output']}`")
+            st.markdown("---")
+
+
+st.markdown("---")
+if st.button("⬇️ Download All Outputs as ZIP"):
+    zip_buffer = io.BytesIO()
+    with zipfile.ZipFile(zip_buffer, "w") as zf:
+        for name in agents:
+            logs = memory.fetch(name)
+            if logs:
+                content = ""
+                for log in logs:
+                    content += f"Input: {log['input']}\nOutput: {log['output']}\n\n"
+                zf.writestr(f"{name}.txt", content)
+    zip_buffer.seek(0)
+    now = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+    st.download_button(
+        label="📦 Download Agent Outputs (ZIP)",
+        data=zip_buffer,
+        file_name=f"veritas360_outputs_{now}.zip",
+        mime="application/zip"
+    )
+
+
+st.markdown("---")
+st.caption("⚙️ Veritas360 | Built with Ollama LLM, Streamlit, and modular multi-agent design.")
